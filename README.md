@@ -2,6 +2,8 @@
 
 Deployment configuration for **[ShopFlow](https://github.com/chaithanyareddyk3273/shopflow-app)**, a microservices order system on Kubernetes.
 
+> 📖 **New to Helm or Kubernetes? Read the [Helm walkthrough](docs/HELM_WALKTHROUGH.md)** first. It explains every file in plain English.
+
 This repo is the **single source of truth for what runs in each environment**. In Phase 2, ArgoCD watches it and syncs the cluster to match. CI never runs `kubectl` or `helm` against a cluster. It opens a pull request here that bumps an image tag, and merging that PR *is* the deployment.
 
 ```mermaid
@@ -26,6 +28,7 @@ shopflow-gitops/
 │       └── secrets.yaml      # dev-only; replaced by Sealed Secrets in Phase 3
 ├── environments/
 │   └── dev/values.yaml       # local kind cluster overrides
+├── docs/HELM_WALKTHROUGH.md  # plain-English guide to every file
 └── kind/kind-config.yaml     # local cluster definition
 ```
 

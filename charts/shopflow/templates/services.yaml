@@ -1,4 +1,8 @@
-{{- /* One Deployment + Service per microservice, driven by .Values.services */ -}}
+{{- /*
+One Deployment + one Service for EACH microservice listed under `services:` in values.yaml.
+`range` is a loop: $name is e.g. "orders-api", $svc is that service's settings.
+Adding a new microservice = adding an entry in values.yaml, no new template needed.
+*/ -}}
 {{- range $name, $svc := .Values.services }}
 ---
 apiVersion: apps/v1
@@ -8,23 +12,28 @@ metadata:
   labels:
     {{- include "shopflow.labels" (dict "root" $ "name" $name) | nindent 4 }}
 spec:
-  replicas: {{ $svc.replicas }}
-  revisionHistoryLimit: 3
+  replicas: {{ $svc.replicas }}       # how many copies (pods) to keep running
+  revisionHistoryLimit: 3                # keep 3 old versions for `kubectl rollout undo`
+  # Which pods belong to this Deployment (must match the pod labels below; never change it)
   selector:
     matchLabels:
       {{- include "shopflow.selectorLabels" (dict "root" $ "name" $name) | nindent 6 }}
+  # The pod template: what every pod of this service looks like
   template:
     metadata:
       labels:
         {{- include "shopflow.selectorLabels" (dict "root" $ "name" $name) | nindent 8 }}
       annotations:
+        # Tell Prometheus to collect metrics from this pod's /metrics endpoint
         prometheus.io/scrape: "true"
         prometheus.io/port: "8000"
         prometheus.io/path: /metrics
         # Roll pods automatically when credentials change
         checksum/credentials: {{ include (print $.Template.BasePath "/secrets.yaml") $ | sha256sum }}
     spec:
+      # The app never calls the Kubernetes API, so don't give it API credentials
       automountServiceAccountToken: false
+      # Pod-level security: never run as root (the Dockerfile creates user 10001)
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -33,7 +42,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: {{ $name }}
-          image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"
+          image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"   # e.g. shopflow/orders-api:dev
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
           ports:
             - name: http
@@ -81,10 +90,13 @@ spec:
               port: http
             periodSeconds: 5
             failureThreshold: 3
+          # requests = what the scheduler reserves for the pod; limits = the most it may use
           resources:
             {{- toYaml $svc.resources | nindent 12 }}
+          # Container-level security: read-only filesystem, no extra Linux privileges
           securityContext:
             {{- include "shopflow.containerSecurityContext" $ | nindent 12 }}
+          # The filesystem is read-only, so give the app a small writable /tmp
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -92,6 +104,8 @@ spec:
         - name: tmp
           emptyDir: {}
 ---
+# A Service gives the pods one stable name and address, e.g. http://orders-api:8000,
+# and spreads requests across all pods of the Deployment
 apiVersion: v1
 kind: Service
 metadata:
