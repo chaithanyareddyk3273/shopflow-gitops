@@ -1,11 +1,23 @@
-# dev: local kind cluster. Images are built locally and loaded with `kind load`,
-# so they are never pulled from a registry.
-imagePullPolicy: Never
+# dev: deployed by ArgoCD into namespace "shopflow-dev".
+#
+# The image tags below are updated AUTOMATICALLY by shopflow-app's CI pipeline after
+# every successful build on main (a commit "dev: deploy shopflow-app@<sha>"), so dev
+# always runs the latest tested code. Don't edit the tags by hand.
+imagePullPolicy: IfNotPresent
 
 services:
   orders-api:
     replicas: 1
+    image:
+      repository: ghcr.io/chaithanyareddyk3273/shopflow-orders-api
+      tag: sha-0000000
   inventory-svc:
     replicas: 1
+    image:
+      repository: ghcr.io/chaithanyareddyk3273/shopflow-inventory-svc
+      tag: sha-0000000
   notifier:
     replicas: 1
+    image:
+      repository: ghcr.io/chaithanyareddyk3273/shopflow-notifier
+      tag: sha-0000000

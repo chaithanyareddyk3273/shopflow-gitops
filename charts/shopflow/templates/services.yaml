@@ -42,7 +42,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: {{ $name }}
-          image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"   # e.g. shopflow/orders-api:dev
+          image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"   # repository:tag from the values files
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
           ports:
             - name: http

@@ -1,0 +1,21 @@
+# The "app of apps": one ArgoCD Application that manages the other Applications.
+# Apply this ONE file by hand (scripts/argocd-up.sh does it); from then on, adding an
+# environment is just adding a file to argocd/apps/ and merging it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopflow-root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/chaithanyareddyk3273/shopflow-gitops.git
+    targetRevision: main
+    path: argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

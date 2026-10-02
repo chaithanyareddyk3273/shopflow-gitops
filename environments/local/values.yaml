@@ -1,0 +1,11 @@
+# local: your laptop. kind-up.sh (in shopflow-app) builds the images locally and loads
+# them into kind with `kind load`, so they are never pulled from a registry.
+imagePullPolicy: Never
+
+services:
+  orders-api:
+    replicas: 1
+  inventory-svc:
+    replicas: 1
+  notifier:
+    replicas: 1

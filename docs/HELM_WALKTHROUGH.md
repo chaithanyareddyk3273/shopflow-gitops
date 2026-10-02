@@ -1,4 +1,4 @@
-# 📖 Walkthrough: how this repo deploys ShopFlow to Kubernetes
+# 📖 Walkthrough: how this repo deploys ShopFlow to Kubernetes (Helm + ArgoCD)
 
 This guide explains every file in plain English. **No Kubernetes or Helm experience needed.** New terms are explained as they come up. For the application code itself, see the [code walkthrough in shopflow-app](https://github.com/chaithanyareddyk3273/shopflow-app/blob/main/docs/CODE_WALKTHROUGH.md).
 
@@ -14,7 +14,7 @@ Writing those by hand for every service and environment means lots of copy-paste
 templates (how)  +  values (what)  ──helm──▶  Kubernetes YAML  ──▶  cluster
 ```
 
-In GitOps, **this repo is the single source of truth**. Whatever is merged here is what should run in the cluster. (In Phase 2, ArgoCD will apply it automatically.)
+In GitOps, **this repo is the single source of truth**. Whatever is merged here is what runs in the cluster. **ArgoCD** makes that happen automatically (see [section 9](#9-argocd-and-the-pipeline)).
 
 ---
 
@@ -33,11 +33,20 @@ shopflow-gitops/
 │       ├── _helpers.tpl        small reusable snippets (labels, security settings)
 │       └── NOTES.txt           message printed after `helm install`
 ├── environments/
-│   └── dev/values.yaml         overrides for the local kind cluster
+│   ├── local/values.yaml       your laptop (images built locally)
+│   ├── dev/values.yaml         dev: image versions written by CI automatically
+│   └── prod/values.yaml        prod: image versions changed only by a reviewed PR
+├── argocd/
+│   ├── root.yaml               the "app of apps" (applied once, by hand)
+│   └── apps/                   one ArgoCD Application per environment
+├── .github/workflows/
+│   ├── validate.yml            checks the chart on every pull request
+│   └── promote.yml             opens the dev → prod promotion pull request
+├── scripts/argocd-up.sh        installs ArgoCD in the local cluster
 └── kind/kind-config.yaml       defines the local Kubernetes cluster
 ```
 
-**Reading order:** `values.yaml` → `templates/services.yaml` → `environments/dev/values.yaml` → `postgres.yaml`.
+**Reading order:** `values.yaml` → `templates/services.yaml` → `environments/` → `argocd/apps/shopflow-dev.yaml` → `postgres.yaml`.
 
 ---
 
@@ -157,19 +166,67 @@ Small named templates used by every file, so labels and security settings are wr
 
 `charts/shopflow/values.yaml` holds the defaults. Each environment overrides only what's different:
 
+| Environment | Namespace | Images come from | Replicas | Who changes it |
+|---|---|---|---|---|
+| `local` | `shopflow` | built on your laptop (`imagePullPolicy: Never`) | 1 | you, via `kind-up.sh` |
+| `dev` | `shopflow-dev` | GitHub Container Registry | 1 | **CI, automatically**, after every green build |
+| `prod` | `shopflow-prod` | GitHub Container Registry | 2 (APIs) | **only a merged promotion PR** |
+
 ```yaml
-# environments/dev/values.yaml (local laptop)
-imagePullPolicy: Never      # images are built locally and loaded into kind, never downloaded
+# environments/prod/values.yaml (excerpt)
 services:
   orders-api:
-    replicas: 1             # 1 copy is enough on a laptop
+    replicas: 2          # 2 copies: one pod can fail or be replaced with no downtime
+    image:
+      repository: ghcr.io/chaithanyareddyk3273/shopflow-orders-api
+      tag: sha-1a2b3c4   # exactly which commit of the code runs in prod
 ```
 
-Phase 2 adds `environments/prod/values.yaml`: more replicas, and images from a real registry.
+The tag is `sha-` plus the Git commit of shopflow-app, never `latest`. You can always tell exactly which code is running, and going back means setting the previous tag.
 
 ---
 
-## 9. Try it yourself
+## 9. ArgoCD and the pipeline
+
+**ArgoCD** is a program that runs *inside* the Kubernetes cluster. Every few minutes it compares **what Git says** with **what's running**, and if they differ, it changes the cluster to match Git ("sync").
+
+### An ArgoCD Application (`argocd/apps/shopflow-dev.yaml`)
+```yaml
+source:
+  repoURL: https://github.com/chaithanyareddyk3273/shopflow-gitops.git
+  path: charts/shopflow                          # the chart...
+  helm:
+    valueFiles: [../../environments/dev/values.yaml]   # ...filled in with dev's values
+destination:
+  namespace: shopflow-dev                        # ...deployed here
+syncPolicy:
+  automated:
+    prune: true      # something deleted from Git → deleted from the cluster
+    selfHeal: true   # someone runs `kubectl edit` by hand → ArgoCD puts it back
+```
+
+### "App of apps" (`argocd/root.yaml`)
+Instead of applying each Application by hand, we apply **one** Application (`root.yaml`) whose job is to deploy everything in `argocd/apps/`. Adding a new environment is then just adding a file and merging it.
+
+### The full journey of a code change
+1. A developer pushes to **shopflow-app** `main`.
+2. **CI** tests the code, builds the images, scans them with Trivy, and pushes them to GitHub Container Registry as `sha-abc1234`.
+3. CI **commits** `tag: sha-abc1234` into `environments/dev/values.yaml` in this repo.
+4. **ArgoCD** notices the commit and updates `shopflow-dev`. Kubernetes replaces the pods one by one, with no downtime.
+5. When dev looks good, someone runs **"Promote dev → prod"** in this repo's Actions tab. It opens a **pull request** changing prod's tags to dev's.
+6. A human reviews and **merges** it, and ArgoCD updates `shopflow-prod`.
+
+**Rollback:** revert the PR (or the CI commit). ArgoCD sees Git go back and deploys the previous version.
+
+### Why CI doesn't deploy directly
+CI has **no Kubernetes credentials at all**. It can only change Git. If CI were ever compromised, the attacker couldn't touch the cluster. Every change is also a Git commit, so you always know who changed what, when, and why.
+
+### `validate.yml`: a safety net
+Because ArgoCD deploys whatever is on `main`, a broken chart would break dev and prod. So every pull request runs `helm lint` and **kubeconform** (which checks the generated YAML against Kubernetes' official schemas) for all three environments, plus the ArgoCD files.
+
+---
+
+## 10. Try it yourself
 
 ```bash
 # Check the chart for mistakes
@@ -178,11 +235,15 @@ helm lint charts/shopflow -f environments/dev/values.yaml
 # See the exact Kubernetes YAML Helm produces, without installing anything
 helm template shopflow charts/shopflow -f environments/dev/values.yaml
 
-# Install it (normally done by shopflow-app/scripts/kind-up.sh)
-helm upgrade --install shopflow charts/shopflow -n shopflow --create-namespace -f environments/dev/values.yaml
+# Install the "local" environment by hand (normally done by shopflow-app/scripts/kind-up.sh)
+helm upgrade --install shopflow charts/shopflow -n shopflow --create-namespace -f environments/local/values.yaml
+
+# Install ArgoCD in your kind cluster; it then deploys dev and prod by itself
+./scripts/argocd-up.sh
+kubectl get applications -n argocd              # Synced + Healthy = matches Git
 
 # Look at what's running
-kubectl get pods -n shopflow
+kubectl get pods -n shopflow-dev
 kubectl describe pod -n shopflow <pod-name>     # details + recent events (great for debugging)
 kubectl logs -n shopflow deploy/orders-api      # the app's log output
 ```
@@ -205,3 +266,8 @@ kubectl logs -n shopflow deploy/orders-api      # the app's log output
 | **Namespace** | A folder-like grouping of resources (`shopflow`) |
 | **kind** | A real Kubernetes cluster running inside Docker on your laptop |
 | **GitOps** | Git is the source of truth for what runs; a tool (ArgoCD) makes the cluster match Git |
+| **ArgoCD Application** | Tells ArgoCD: "deploy this folder of this Git repo into this namespace" |
+| **Sync / self-heal / prune** | Make the cluster match Git / undo manual changes / delete what was removed from Git |
+| **Promotion** | Moving a version that's tested in one environment (dev) to the next (prod) |
+| **Image tag** | The version label of a container image; here `sha-<commit>` |
+| **GHCR** | GitHub Container Registry, where CI stores the built images |

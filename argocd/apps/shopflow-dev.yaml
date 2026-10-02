@@ -1,0 +1,28 @@
+# ArgoCD Application: keeps namespace "shopflow-dev" identical to what Git says.
+# "Git says" = the Helm chart in charts/shopflow + environments/dev/values.yaml on main.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopflow-dev
+  namespace: argocd
+  # Deleting this Application also deletes everything it deployed
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/chaithanyareddyk3273/shopflow-gitops.git
+    targetRevision: main
+    path: charts/shopflow
+    helm:
+      valueFiles:
+        - ../../environments/dev/values.yaml
+  destination:
+    server: https://kubernetes.default.svc   # the cluster ArgoCD itself runs in
+    namespace: shopflow-dev
+  syncPolicy:
+    automated:
+      prune: true      # remove resources that were deleted from Git
+      selfHeal: true   # undo manual `kubectl edit` changes: Git always wins
+    syncOptions:
+      - CreateNamespace=true
