@@ -1,0 +1,27 @@
+# ArgoCD Application: keeps namespace "shopflow-prod" identical to what Git says.
+# Prod changes only when a promotion pull request is merged into main.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopflow-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/chaithanyareddyk3273/shopflow-gitops.git
+    targetRevision: main
+    path: charts/shopflow
+    helm:
+      valueFiles:
+        - ../../environments/prod/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shopflow-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,57 @@
+# Promotion = copy the image tags that are running (and tested) in dev into prod,
+# as a pull request. A human reviews and merges it; ArgoCD then deploys prod.
+# Run it from the Actions tab: "Promote dev → prod" → "Run workflow".
+name: Promote dev → prod
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
+
+      - name: Copy image tags from dev to prod
+        id: tags
+        run: |
+          summary=""
+          for svc in orders-api inventory-svc notifier; do
+            tag=$(yq ".services.\"$svc\".image.tag" environments/dev/values.yaml)
+            old=$(yq ".services.\"$svc\".image.tag" environments/prod/values.yaml)
+            yq -i ".services.\"$svc\".image.tag = \"$tag\"" environments/prod/values.yaml
+            summary+="| \`$svc\` | \`$old\` | \`$tag\` |"$'\n'
+          done
+          {
+            echo "summary<<EOF"
+            echo "$summary"
+            echo "EOF"
+            echo "tag=$(yq '.services."orders-api".image.tag' environments/dev/values.yaml)"
+          } >> "$GITHUB_OUTPUT"
+          git diff
+
+      # Uses the GITOPS_TOKEN secret (not the default token) so that the Validate
+      # workflow runs on the PR; PRs opened with the default token don't trigger workflows.
+      - name: Open the promotion pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITOPS_TOKEN }}
+          branch: promote/prod-${{ steps.tags.outputs.tag }}
+          commit-message: "prod: promote ${{ steps.tags.outputs.tag }} from dev"
+          title: "Promote ${{ steps.tags.outputs.tag }} to prod"
+          body: |
+            Promotes the image versions currently running in **dev** to **prod**.
+
+            | Service | prod now | after merge |
+            |---|---|---|
+            ${{ steps.tags.outputs.summary }}
+            **Merging this PR deploys to prod** (ArgoCD syncs `shopflow-prod`).
+            **Rollback** = revert this PR.
+          delete-branch: true

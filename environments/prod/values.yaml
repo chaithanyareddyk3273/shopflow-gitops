@@ -1,0 +1,23 @@
+# prod: deployed by ArgoCD into namespace "shopflow-prod".
+#
+# Image tags change ONLY through a pull request opened by the "Promote dev → prod"
+# workflow (Actions tab). It copies the tags currently running in dev; merging the PR
+# is the production deployment, and reverting it is the rollback.
+imagePullPolicy: IfNotPresent
+
+services:
+  orders-api:
+    replicas: 2          # 2 copies: one pod can fail or be replaced with no downtime
+    image:
+      repository: ghcr.io/chaithanyareddyk3273/shopflow-orders-api
+      tag: sha-0000000
+  inventory-svc:
+    replicas: 2
+    image:
+      repository: ghcr.io/chaithanyareddyk3273/shopflow-inventory-svc
+      tag: sha-0000000
+  notifier:
+    replicas: 1          # one consumer is plenty; RabbitMQ queues the work
+    image:
+      repository: ghcr.io/chaithanyareddyk3273/shopflow-notifier
+      tag: sha-0000000
