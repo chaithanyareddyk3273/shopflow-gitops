@@ -1,0 +1,89 @@
+{{- /*
+Single-node RabbitMQ for dev/demo. For production this would be Amazon MQ
+or the RabbitMQ Cluster Operator.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "rabbitmq") | nindent 4 }}
+spec:
+  selector:
+    {{- include "shopflow.selectorLabels" (dict "root" $ "name" "rabbitmq") | nindent 4 }}
+  ports:
+    - name: amqp
+      port: 5672
+    - name: management
+      port: 15672
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "rabbitmq") | nindent 4 }}
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "shopflow.selectorLabels" (dict "root" $ "name" "rabbitmq") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shopflow.selectorLabels" (dict "root" $ "name" "rabbitmq") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100   # "rabbitmq" user in the alpine image
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rabbitmq
+          image: {{ .Values.rabbitmq.image }}
+          ports:
+            - name: amqp
+              containerPort: 5672
+            - name: management
+              containerPort: 15672
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: {{ .Values.rabbitmq.user | quote }}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: shopflow-credentials
+                  key: rabbitmq-password
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "status"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 15
+          resources:
+            {{- toYaml .Values.rabbitmq.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.rabbitmq.storage }}

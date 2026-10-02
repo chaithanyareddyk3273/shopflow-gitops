@@ -1,0 +1,11 @@
+# dev: local kind cluster. Images are built locally and loaded with `kind load`,
+# so they are never pulled from a registry.
+imagePullPolicy: Never
+
+services:
+  orders-api:
+    replicas: 1
+  inventory-svc:
+    replicas: 1
+  notifier:
+    replicas: 1

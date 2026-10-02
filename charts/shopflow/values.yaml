@@ -1,0 +1,65 @@
+# Default values. Environment-specific overrides live in environments/<env>/values.yaml.
+# Resource names are fixed (orders-api, postgres, ...), so install one release per namespace.
+
+imagePullPolicy: IfNotPresent
+
+# Dev-only credentials. Phase 3 replaces these with Sealed Secrets / External Secrets,
+# so no real secret is ever committed to Git.
+credentials:
+  postgresPassword: shopflow-dev
+  rabbitmqPassword: shopflow-dev
+
+services:
+  orders-api:
+    image:
+      repository: shopflow/orders-api
+      tag: dev
+    replicas: 2
+    database: orders        # gets DATABASE_URL for this database
+    rabbitmq: true          # gets RABBITMQ_URL
+    env:
+      INVENTORY_URL: http://inventory-svc:8000
+    # Memory limit only: CPU limits cause throttling, CPU requests are enough for scheduling
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits: { memory: 256Mi }
+
+  inventory-svc:
+    image:
+      repository: shopflow/inventory-svc
+      tag: dev
+    replicas: 2
+    database: inventory
+    rabbitmq: false
+    env: {}
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits: { memory: 256Mi }
+
+  notifier:
+    image:
+      repository: shopflow/notifier
+      tag: dev
+    replicas: 1
+    database: ""
+    rabbitmq: true
+    env: {}
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits: { memory: 128Mi }
+
+postgres:
+  image: postgres:16-alpine
+  user: shopflow
+  storage: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+
+rabbitmq:
+  image: rabbitmq:3.13-management-alpine
+  user: shopflow
+  storage: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }

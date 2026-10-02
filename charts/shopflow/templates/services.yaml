@@ -1,0 +1,108 @@
+{{- /* One Deployment + Service per microservice, driven by .Values.services */ -}}
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  replicas: {{ $svc.replicas }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "shopflow.selectorLabels" (dict "root" $ "name" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shopflow.selectorLabels" (dict "root" $ "name" $name) | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
+        # Roll pods automatically when credentials change
+        checksum/credentials: {{ include (print $.Template.BasePath "/secrets.yaml") $ | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ $name }}
+          image: "{{ $svc.image.repository }}:{{ $svc.image.tag }}"
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            {{- if $svc.database }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shopflow-credentials
+                  key: postgres-password
+            # $(VAR) is expanded by Kubernetes from the env var defined above
+            - name: DATABASE_URL
+              value: "postgresql://{{ $.Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ $svc.database }}"
+            {{- end }}
+            {{- if $svc.rabbitmq }}
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shopflow-credentials
+                  key: rabbitmq-password
+            - name: RABBITMQ_URL
+              value: "amqp://{{ $.Values.rabbitmq.user }}:$(RABBITMQ_PASSWORD)@rabbitmq:5672/%2F"
+            {{- end }}
+            {{- range $key, $value := $svc.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          # Allow up to 2 min for first start (services wait for Postgres before serving)
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          securityContext:
+            {{- include "shopflow.containerSecurityContext" $ | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  selector:
+    {{- include "shopflow.selectorLabels" (dict "root" $ "name" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+{{- end }}
