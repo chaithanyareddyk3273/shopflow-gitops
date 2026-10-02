@@ -9,14 +9,14 @@ services:
     replicas: 1
     image:
       repository: ghcr.io/chaithanyareddyk3273/shopflow-orders-api
-      tag: sha-5093c1c
+      tag: sha-f71e828
   inventory-svc:
     replicas: 1
     image:
       repository: ghcr.io/chaithanyareddyk3273/shopflow-inventory-svc
-      tag: sha-5093c1c
+      tag: sha-f71e828
   notifier:
     replicas: 1
     image:
       repository: ghcr.io/chaithanyareddyk3273/shopflow-notifier
-      tag: sha-5093c1c
+      tag: sha-f71e828
