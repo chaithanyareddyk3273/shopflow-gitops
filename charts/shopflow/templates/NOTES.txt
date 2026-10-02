@@ -1,0 +1,13 @@
+ShopFlow is deploying to namespace "{{ .Release.Namespace }}".
+
+Watch the pods come up:
+  kubectl get pods -n {{ .Release.Namespace }} -w
+
+Try it (in a second terminal):
+  kubectl port-forward -n {{ .Release.Namespace }} svc/orders-api 8080:8000
+
+  curl -X POST localhost:8080/orders -H "Content-Type: application/json" \
+    -d '{"sku": "SKU-001", "quantity": 2, "customer_email": "jane@example.com"}'
+
+See the notification:
+  kubectl logs -n {{ .Release.Namespace }} deploy/notifier
