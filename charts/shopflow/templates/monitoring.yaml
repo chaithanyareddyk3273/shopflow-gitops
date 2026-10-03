@@ -1,0 +1,84 @@
+{{- /*
+Monitoring for this environment (needs platform-monitoring, i.e. the Prometheus Operator):
+  - ServiceMonitor: tells Prometheus to scrape /metrics on every ShopFlow service
+  - PrometheusRule: alert rules, evaluated by Prometheus, delivered by Alertmanager
+The Grafana dashboard is shared by all environments: see platform/dashboards/.
+*/ -}}
+{{- if .Values.monitoring.enabled }}
+{{- $ns := .Release.Namespace }}
+{{- $services := keys .Values.services | sortAlpha }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: shopflow
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "monitoring") | nindent 4 }}
+spec:
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [{{ join ", " $services }}]
+      - key: app.kubernetes.io/instance
+        operator: In
+        values: [{{ .Release.Name }}]
+  # Copy this pod label onto every metric, so a canary's metrics can be told apart
+  # from the stable version's (used by the Argo Rollouts analysis).
+  podTargetLabels:
+    - rollouts-pod-template-hash
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shopflow-alerts
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "monitoring") | nindent 4 }}
+spec:
+  groups:
+    - name: shopflow.{{ $ns }}
+      rules:
+        - alert: ShopFlowServiceDown
+          expr: up{namespace="{{ $ns }}", service=~"{{ join "|" $services }}"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ "{{" }} $labels.service {{ "}}" }} pod {{ "{{" }} $labels.pod {{ "}}" }} has been down for 2 minutes ({{ $ns }})"
+
+        - alert: ShopFlowHighErrorRate
+          # Share of requests answered with a 5xx, per service, over 5 minutes
+          expr: |
+            sum by (service) (rate(http_request_duration_seconds_count{namespace="{{ $ns }}", status=~"5.."}[5m]))
+              /
+            sum by (service) (rate(http_request_duration_seconds_count{namespace="{{ $ns }}"}[5m]))
+              > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "More than 5% of {{ "{{" }} $labels.service {{ "}}" }} requests are failing ({{ $ns }})"
+
+        - alert: ShopFlowHighLatency
+          # 95% of requests should finish in under 500 ms (health checks excluded)
+          expr: |
+            histogram_quantile(0.95,
+              sum by (service, le) (rate(http_request_duration_seconds_bucket{namespace="{{ $ns }}", route!~"/healthz|/readyz"}[5m]))
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ "{{" }} $labels.service {{ "}}" }} p95 latency is above 500 ms ({{ $ns }})"
+
+        - alert: ShopFlowOrderEventsLost
+          # A confirmed order's event couldn't be delivered, so the customer wasn't notified
+          expr: increase(order_event_publish_failures_total{namespace="{{ $ns }}"}[10m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "order.created events failed to publish in the last 10 minutes ({{ $ns }})"
+{{- end }}

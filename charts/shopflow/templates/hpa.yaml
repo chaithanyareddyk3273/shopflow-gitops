@@ -1,0 +1,40 @@
+{{- /*
+HorizontalPodAutoscaler: adds pods when average CPU goes above the target, removes them
+when it drops. Needs metrics-server (platform-metrics-server) and CPU *requests* on the
+pods, because the target is a percentage of the request.
+*/ -}}
+{{- range $name, $svc := .Values.services }}
+{{- if and $svc.autoscaling $svc.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    {{- if and $svc.canary $svc.canary.enabled }}
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    {{- else }}
+    apiVersion: apps/v1
+    kind: Deployment
+    {{- end }}
+    name: {{ $name }}
+  minReplicas: {{ $svc.autoscaling.minReplicas }}
+  maxReplicas: {{ $svc.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $svc.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    # Scale down slowly (wait 2 min of low load) so a short dip doesn't remove pods
+    # that are needed again seconds later.
+    scaleDown:
+      stabilizationWindowSeconds: 120
+{{- end }}
+{{- end }}

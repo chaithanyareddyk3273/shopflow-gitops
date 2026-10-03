@@ -1,0 +1,14 @@
+# Grafana dashboards as code. Each JSON file becomes a ConfigMap labelled
+# grafana_dashboard=1; Grafana's sidecar notices it and loads the dashboard.
+# To change a dashboard: edit it in Grafana, export the JSON, replace the file, open a PR.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+configMapGenerator:
+  - name: shopflow-dashboard
+    files:
+      - shopflow.json

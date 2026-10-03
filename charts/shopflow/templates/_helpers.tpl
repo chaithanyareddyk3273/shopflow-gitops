@@ -20,3 +20,10 @@ readOnlyRootFilesystem: true
 capabilities:
   drop: ["ALL"]
 {{- end }}
+
+{{/* podSelector matching one component by name, e.g. "postgres" (used by NetworkPolicies) */}}
+{{- define "shopflow.podSelector" -}}
+podSelector:
+  matchLabels:
+    app.kubernetes.io/name: {{ . }}
+{{- end }}

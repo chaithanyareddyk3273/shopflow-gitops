@@ -1,0 +1,108 @@
+{{- /*
+NetworkPolicies: a firewall between pods. By default every pod can reach every other
+pod; these rules make each component accept traffic ONLY from the services that need it.
+If an attacker got into the notifier, they still couldn't reach Postgres.
+
+  who may connect          ->  to what
+  anyone (it's the API)    ->  orders-api :8000
+  orders-api               ->  inventory-svc :8000
+  orders-api, inventory    ->  postgres :5432
+  orders-api, notifier     ->  rabbitmq :5672
+  Prometheus (monitoring)  ->  every service's /metrics :8000
+  everything else          ->  denied
+*/ -}}
+{{- if .Values.networkPolicies.enabled }}
+# Step 1: deny all incoming traffic to every pod in this namespace...
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "network-policy") | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# ...then step 2: open exactly the paths in the table above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orders-api-ingress
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "network-policy") | nindent 4 }}
+spec:
+  {{- include "shopflow.podSelector" "orders-api" | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}   # public entry point: any namespace (e.g. a future ingress controller)
+      ports:
+        - port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inventory-svc-ingress
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "network-policy") | nindent 4 }}
+spec:
+  {{- include "shopflow.podSelector" "inventory-svc" | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{- include "shopflow.podSelector" "orders-api" | nindent 10 }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicies.monitoringNamespace }}
+      ports:
+        - port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: notifier-ingress
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "network-policy") | nindent 4 }}
+spec:
+  {{- include "shopflow.podSelector" "notifier" | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:   # the notifier receives no requests; only Prometheus scrapes it
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicies.monitoringNamespace }}
+      ports:
+        - port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "network-policy") | nindent 4 }}
+spec:
+  {{- include "shopflow.podSelector" "postgres" | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{- include "shopflow.podSelector" "orders-api" | nindent 10 }}
+        - {{- include "shopflow.podSelector" "inventory-svc" | nindent 10 }}
+      ports:
+        - port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rabbitmq-ingress
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" "network-policy") | nindent 4 }}
+spec:
+  {{- include "shopflow.podSelector" "rabbitmq" | nindent 2 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - {{- include "shopflow.podSelector" "orders-api" | nindent 10 }}
+        - {{- include "shopflow.podSelector" "notifier" | nindent 10 }}
+      ports:
+        - port: 5672
+{{- end }}

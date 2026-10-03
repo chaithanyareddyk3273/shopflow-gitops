@@ -1,0 +1,36 @@
+{{- /*
+AnalysisTemplate: the health check Argo Rollouts runs during a canary.
+It asks Prometheus what share of the NEW version's POST /orders requests succeeded.
+Below the threshold, the rollout is aborted and every pod goes back to the old version.
+*/ -}}
+{{- range $name, $svc := .Values.services }}
+{{- if and $svc.canary $svc.canary.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ $name }}-success-rate
+  labels:
+    {{- include "shopflow.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  args:
+    - name: canary-hash        # filled in by the Rollout: identifies the canary's pods
+  metrics:
+    - name: success-rate
+      interval: 20s            # measure every 20 seconds...
+      count: 4                 # ...4 times
+      failureLimit: 1          # more than 1 bad measurement = abort and roll back
+      successCondition: result[0] >= {{ $svc.canary.successRateThreshold }}
+      provider:
+        prometheus:
+          address: {{ $.Values.rollouts.prometheusAddress }}
+          # {{ "{{" }}args.canary-hash{{ "}}" }} is filled in by Argo Rollouts, not Helm.
+          # "or on() vector(1)": no traffic yet counts as healthy instead of as an error.
+          query: |
+            (
+              sum(rate(http_request_duration_seconds_count{namespace="{{ $.Release.Namespace }}", service="{{ $name }}", route="{{ $svc.canary.route }}", rollouts_pod_template_hash="{{ "{{" }}args.canary-hash{{ "}}" }}", status!~"5.."}[1m]))
+                /
+              sum(rate(http_request_duration_seconds_count{namespace="{{ $.Release.Namespace }}", service="{{ $name }}", route="{{ $svc.canary.route }}", rollouts_pod_template_hash="{{ "{{" }}args.canary-hash{{ "}}" }}"}[1m]))
+            ) or on() vector(1)
+{{- end }}
+{{- end }}

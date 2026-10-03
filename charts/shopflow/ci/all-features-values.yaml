@@ -1,0 +1,21 @@
+# CI only (Helm's ci/ convention): render the chart with EVERY optional feature on,
+# so a broken template is caught even before any environment enables it.
+# The "encrypted" values are placeholders: CI only renders, it never deploys.
+monitoring:
+  enabled: true
+networkPolicies:
+  enabled: true
+sealedSecrets:
+  enabled: true
+  encryptedData:
+    postgres-password: AgCIPLACEHOLDER
+    rabbitmq-password: AgCIPLACEHOLDER
+services:
+  orders-api:
+    autoscaling:
+      enabled: true
+    canary:
+      enabled: true
+  inventory-svc:
+    autoscaling:
+      enabled: true

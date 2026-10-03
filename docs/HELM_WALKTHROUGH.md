@@ -29,7 +29,11 @@ shopflow-gitops/
 │       ├── services.yaml       ⭐ Deployment + Service for each microservice
 │       ├── postgres.yaml       the database
 │       ├── rabbitmq.yaml       the message broker
-│       ├── secrets.yaml        passwords
+│       ├── secrets.yaml        passwords (plain Secret, or encrypted SealedSecret)
+│       ├── monitoring.yaml     Prometheus ServiceMonitor + alert rules
+│       ├── hpa.yaml            autoscalers
+│       ├── networkpolicies.yaml  pod-to-pod firewall
+│       ├── rollouts-analysis.yaml  canary health check
 │       ├── _helpers.tpl        small reusable snippets (labels, security settings)
 │       └── NOTES.txt           message printed after `helm install`
 ├── environments/
@@ -42,7 +46,10 @@ shopflow-gitops/
 ├── .github/workflows/
 │   ├── validate.yml            checks the chart on every pull request
 │   └── promote.yml             opens the dev → prod promotion pull request
+├── platform/dashboards/        Grafana dashboard as code (+ kustomization)
 ├── scripts/argocd-up.sh        installs ArgoCD in the local cluster
+├── scripts/seal-credentials.sh encrypts new passwords for one environment
+├── scripts/apply-credentials.sh changes passwords in running databases (no data loss)
 └── kind/kind-config.yaml       defines the local Kubernetes cluster
 ```
 
@@ -226,7 +233,80 @@ Because ArgoCD deploys whatever is on `main`, a broken chart would break dev and
 
 ---
 
-## 10. Try it yourself
+## 10. Production features (Phase 3)
+
+Five features turn the demo into something you'd run for real. Each one is **switched off in `charts/shopflow/values.yaml`** and switched on per environment, so it reaches **dev first** and **prod only through a reviewed PR**, the same as code.
+
+They rely on four **platform tools**, installed once for the whole cluster by ArgoCD (`argocd/apps/platform-*.yaml`):
+
+| Platform app | What it is | Needed by |
+|---|---|---|
+| `platform-monitoring` | **Prometheus** (collects metrics), **Grafana** (dashboards), **Alertmanager** (alerts) | monitoring, canary |
+| `platform-metrics-server` | Measures each pod's CPU and memory | autoscaling |
+| `platform-sealed-secrets` | Decrypts encrypted secrets inside the cluster | secrets |
+| `platform-argo-rollouts` | Runs canary deployments | canary |
+| `platform-dashboards` | The ShopFlow Grafana dashboard, from `platform/dashboards/` | monitoring |
+
+### 10.1 Monitoring: `monitoring.enabled` → `templates/monitoring.yaml`
+- A **ServiceMonitor** tells Prometheus: "every 15 seconds, read `/metrics` from orders-api, inventory-svc and notifier".
+- A **PrometheusRule** holds 4 **alerts**: a service is down for 2 minutes; more than 5% of requests fail; 95% of requests take longer than 500 ms; order events were lost.
+- The **Grafana dashboard** (`platform/dashboards/shopflow.json`) shows traffic, errors and latency per service (the "RED" method: Rate, Errors, Duration), plus orders, stock reservations and notifications. Pick the environment at the top.
+
+```bash
+kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80    # http://localhost:3000  (admin / shopflow-demo)
+```
+
+### 10.2 Autoscaling: `services.<name>.autoscaling` → `templates/hpa.yaml`
+A **HorizontalPodAutoscaler** checks CPU every 15 seconds. If the pods use more than **70% of the CPU they requested**, it adds pods (up to `maxReplicas`); when load drops it waits 2 minutes, then removes them. With autoscaling on, the chart **stops setting `replicas`**, otherwise ArgoCD and the autoscaler would fight over it.
+
+> Tested: 4 load-generator workers took orders-api from **2 → 5 pods** and inventory-svc from **2 → 4** within 30 seconds.
+
+### 10.3 Network security: `networkPolicies.enabled` → `templates/networkpolicies.yaml`
+By default every pod can talk to every other pod. These rules **block everything**, then open only what's needed:
+
+| From | orders-api | inventory-svc | postgres | rabbitmq |
+|---|---|---|---|---|
+| anywhere (public API) | ✅ | 🚫 | 🚫 | 🚫 |
+| orders-api | | ✅ | ✅ | ✅ |
+| inventory-svc | | | ✅ | 🚫 |
+| notifier | | 🚫 | 🚫 | ✅ |
+| Prometheus | ✅ /metrics | ✅ /metrics | | |
+
+> Tested: from an unknown pod, only orders-api answered; from the notifier, RabbitMQ answered but **Postgres and inventory-svc were blocked**.
+
+### 10.4 Secrets: `sealedSecrets` → `templates/secrets.yaml`
+Passwords can't go in Git in plain text. **Sealed Secrets** solves this with public-key encryption:
+1. `scripts/seal-credentials.sh shopflow-dev` creates random passwords and **encrypts** them with the cluster's **public** key. The plain passwords are never shown or saved.
+2. The encrypted text (`AgB…`) goes in `environments/dev/values.yaml`. It's safe in a public repo: only the controller inside the cluster has the **private** key, and the result only decrypts in that exact namespace.
+3. In the cluster, the controller turns the **SealedSecret** into a normal Secret, which the pods use as before.
+
+⚠️ **Changing passwords on a running environment.** Postgres and RabbitMQ only read their password when their data volume is **first created**, so after the Secret changes they still expect the old one. `scripts/apply-credentials.sh shopflow-dev` changes the password **inside** the running Postgres (`ALTER USER`) and RabbitMQ (`rabbitmqctl change_password`), **with no data lost**, then restarts the services. The passwords go from the Secret to the databases through stdin, so they're never printed or written to disk. (With a managed database like Amazon RDS, AWS Secrets Manager can rotate them automatically instead.)
+
+⚠️ **The encrypted values belong to one cluster.** A new cluster has a new key, so re-run the script there (or back up and restore the controller's key).
+
+### 10.5 Canary deployments: `services.<name>.canary` → Argo Rollouts
+With `canary.enabled`, orders-api becomes a **Rollout** instead of a Deployment. A new version then goes out like this:
+
+```
+new version ──▶ 50% of pods ──▶ wait 30 s ──▶ Prometheus check ×4 ──▶ 100% ✅
+                                                     │
+                                       success rate < 95%
+                                                     ▼
+                                     ABORT: all pods back to the old version ↩
+```
+
+The check (`templates/rollouts-analysis.yaml`) asks Prometheus: *"of the requests to `POST /orders` handled by the **new** pods in the last minute, what share succeeded?"* The new pods are identified by the `rollouts-pod-template-hash` label, which the ServiceMonitor copies onto every metric.
+
+> Tested with real traffic:
+> - **Good version:** 4/4 checks passed and it was promoted to 100% automatically, in about 100 seconds.
+> - **Broken version** (`FAULT_INJECTION_RATE=0.5`: half of all orders fail): two checks measured **48%** and **46%** success, the rollout was **aborted 78 seconds** after the deploy, and all 5 pods went **back to the previous version automatically**: `RolloutAborted: Metric "success-rate" assessed Failed due to failed (2) > failureLimit (1)`.
+> - The first check of a new version returns 1 ("no data yet counts as healthy") until Prometheus has scraped the new pods twice, which is why the analysis takes 4 measurements and allows only 1 failure.
+
+**In GitOps terms:** after an automatic abort, Git still describes the bad version, and ArgoCD shows the app as **Degraded**. You fix it the GitOps way: **revert the commit or PR** that introduced the bad version.
+
+---
+
+## 11. Try it yourself
 
 ```bash
 # Check the chart for mistakes
@@ -271,3 +351,10 @@ kubectl logs -n shopflow deploy/orders-api      # the app's log output
 | **Promotion** | Moving a version that's tested in one environment (dev) to the next (prod) |
 | **Image tag** | The version label of a container image; here `sha-<commit>` |
 | **GHCR** | GitHub Container Registry, where CI stores the built images |
+| **Prometheus / Grafana / Alertmanager** | Collects metrics / shows them as dashboards / sends alerts |
+| **ServiceMonitor / PrometheusRule** | Tell Prometheus what to scrape / which alerts to evaluate |
+| **HPA (HorizontalPodAutoscaler)** | Adds or removes pods based on CPU use |
+| **NetworkPolicy** | A firewall rule between pods |
+| **SealedSecret** | A Secret encrypted with the cluster's public key, safe to store in Git |
+| **Canary / Rollout** | Releasing a new version to part of the traffic first; Argo Rollouts' replacement for a Deployment |
+| **AnalysisTemplate** | The Prometheus check that decides whether a canary is promoted or rolled back |

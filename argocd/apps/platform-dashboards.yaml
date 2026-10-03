@@ -1,0 +1,22 @@
+# Platform: Grafana dashboards as code (platform/dashboards in this repo).
+# Shared by all environments; each dashboard has an environment picker.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-dashboards
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/chaithanyareddyk3273/shopflow-gitops.git
+    targetRevision: main
+    path: platform/dashboards
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

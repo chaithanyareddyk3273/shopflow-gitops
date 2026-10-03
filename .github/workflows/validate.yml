@@ -13,6 +13,9 @@ permissions:
 
 env:
   KUBECONFORM_VERSION: v0.8.0
+  # Schemas for custom resources (Argo, Prometheus Operator, Sealed Secrets) come from
+  # the community CRD catalog; built-in kinds use Kubernetes' own schemas.
+  CRD_SCHEMAS: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
 
 jobs:
   chart:
@@ -21,7 +24,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [local, dev, prod]
+        # all-features = chart/ci/all-features-values.yaml: every optional feature on,
+        # so a broken template is caught before any environment enables it
+        environment: [local, dev, prod, all-features]
     steps:
       - uses: actions/checkout@v4
 
@@ -32,16 +37,25 @@ jobs:
           curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
             | tar xz -C /usr/local/bin kubeconform
 
-      - name: Helm lint
-        run: helm lint charts/shopflow -f environments/${{ matrix.environment }}/values.yaml
-
-      - name: Render and validate against the Kubernetes schema
+      - name: Pick the values file
+        id: values
         run: |
-          helm template shopflow charts/shopflow -f environments/${{ matrix.environment }}/values.yaml \
-            | kubeconform -strict -summary -
+          if [ "${{ matrix.environment }}" = "all-features" ]; then
+            echo "file=charts/shopflow/ci/all-features-values.yaml" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=environments/${{ matrix.environment }}/values.yaml" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Helm lint
+        run: helm lint charts/shopflow -f ${{ steps.values.outputs.file }}
+
+      - name: Render and validate against the Kubernetes schemas
+        run: |
+          helm template shopflow charts/shopflow -f ${{ steps.values.outputs.file }} \
+            | kubeconform -strict -summary -schema-location default -schema-location "$CRD_SCHEMAS" -
 
   argocd:
-    name: ArgoCD manifests
+    name: ArgoCD manifests + dashboards
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,10 +65,10 @@ jobs:
           curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
             | tar xz -C /usr/local/bin kubeconform
 
-      # ArgoCD's Application is a custom resource, so its schema comes from the community CRD catalog
       - name: Validate Applications
+        run: kubeconform -strict -summary -schema-location default -schema-location "$CRD_SCHEMAS" argocd/
+
+      - name: Validate dashboards (kustomize build + JSON check)
         run: |
-          kubeconform -strict -summary \
-            -schema-location default \
-            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            argocd/
+          kubectl kustomize platform/dashboards | kubeconform -strict -summary -
+          for f in platform/dashboards/*.json; do jq empty "$f" && echo "valid JSON: $f"; done
