@@ -3,18 +3,41 @@
 # The image tags below are updated AUTOMATICALLY by shopflow-app's CI pipeline after
 # every successful build on main (a commit "dev: deploy shopflow-app@<sha>"), so dev
 # always runs the latest tested code. Don't edit the tags by hand.
+#
+# New platform features are switched on here first; prod gets them through a PR.
 imagePullPolicy: IfNotPresent
+
+monitoring:
+  enabled: true             # ServiceMonitor + alert rules
+networkPolicies:
+  enabled: true             # pod-to-pod firewall
+
+# Passwords encrypted for this namespace only (scripts/seal-credentials.sh shopflow-dev)
+sealedSecrets:
+  enabled: true
+  encryptedData:
+    postgres-password: AgB/9zD1sEXaQSSqDf9ewhqvb+e+4Haj4IFEYQYC4BZsKkiVGjbqqacxxULd1RkoocfQs9ErvIAG2+QJ6q0v76bE2xcOBWTuz7/2ga9VIFY+EZ0HAtgKOPXSpdacWQiwqfOd8OO9csxEcW+V5/qDIIm5vwc/7YWbPCCHRjtr/A1iSLfA1Be/QTVhuOpsnjjiqe0tNXpYwquHOryxIaH2njsT77DxJIo58DvJMILREpDWg/rskuYV1jmVH2iVJ36Ho74qbyZZ0K72cYMmo/M14twhoOz8bNHo1iiWD1HIVNwVeV5cTN3YWLSYOqEGyilXTJfKDChM3BSVMzZHevp74Xf3o0lLVszgbiyEJ3jAkgmYo7dAIhvb7h8f2wP7NrM+KRla+FnFsDe/XgNhGHXRQEky5Vi+BZNAcaWPlBZ3+hWpG6YaavdzeNek/Zwe0py9H5dIPBjbFZCzzPM+bg/gQGsaYQ8Q51dTTdyZ1XcmPJZgcFU6mkV5LL05MJ7Zsqz3hCzrv+VxfsMeVwubZzBHjqdob6IdednIPfuPDYIxg1GvOVROoxzFrwoyYTi2GSeqKSJuo4Jpg9E8bq03u9HKZWZdWeobK/LRkd8JxcKABWbDL1lHlJVwsk7ArMiaCWpOf4NJCgZzqzu/z4F6nMM+MOyG1Ra5ojwnsET/fmpQs6iINlzYb/V/9atr7euGGQj5/punxn5C0a4EXhBM+PmjSugWwJwl2BkLIVBv0y5d7BzA6g==
+    rabbitmq-password: AgARQwIjunTkzZepP7k1o2OGsEH0ub0C7B74PasmcwCQh4RhKKx55YNWVTWHduBaXWFXcrDfITlS+Oy375Ug09Oe32NuCfByHv9H5V9b8BDi+ZHzmqwtIO5LrG3WhMrtDfa0uAyosp4MMS3HFeuSB2viNg9rGxvmSkGuGbtwxI7pEN3oYhAvMjRrNMtHdn6BlcxdDCvdHHtMtYUZCcaSgoNdtZupU+UNQE6TAd3gzdYSEwnJQfFyUoLlguLkJQiJsu7yI7mpB1EZ//LxMqnnhLRI/1Y55j3UGx55JMKIo0ubJfr/VR2Zc4NAvCfTdAAlz58XVXo2+JmHAobwzsZ79zZ0x3goCjlw8TvehJcCjRkXXlsIGJEBapX9oICSL4RwvbZenJQWp9mWVLCGc/6Qyogmnprj9okpBfJSaSa1CkldomAhJdyhWmGBd4u5w9WkUq4wI9we0aXMEIM8h+dKVomeF+cdGFEAqZtHjDPyH9e5wbjHr0XYyj5YsXAl9MGyTZrtq3GSUxOUy+G3gc9ta0+CXDSJ82CPCQnOviyteXzTO1Gr49OPC/H0ukF70OY9u0/GTZk2uVNCcuE+7sUjsFtEf6Gqdj7gi6EaXVRHUBe3jiXsuCct/4zqbYMp8tTbIXB+11srAivJoOt+BGz3T9mN44WUAIonHvKHo8eWmWydP+1qrreq2cS9AiVXg+rWl2BA8bia5/C/UWBW98g+ngUwKcIKuApmdOI5xz255cE1zA==
+
 services:
   orders-api:
-    replicas: 1
     image:
       repository: ghcr.io/chaithanyareddyk3273/shopflow-orders-api
       tag: sha-f71e828
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
+    canary:
+      enabled: true         # new versions go out as a canary, rolled back if errors rise
   inventory-svc:
-    replicas: 1
     image:
       repository: ghcr.io/chaithanyareddyk3273/shopflow-inventory-svc
       tag: sha-f71e828
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
   notifier:
     replicas: 1
     image:

@@ -1,0 +1,66 @@
+# Platform: Prometheus (metrics + alert rules), Grafana (dashboards), Alertmanager.
+# Shared by every environment. ShopFlow's own ServiceMonitor, alert rules and dashboard
+# are switched on per environment through the shopflow chart (monitoring.enabled).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-monitoring
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 91.9.0
+    helm:
+      releaseName: monitoring
+      valuesObject:
+        fullnameOverride: monitoring
+        # kind runs these control-plane components bound to localhost, so Prometheus
+        # can't scrape them; on EKS they're managed by AWS. Turn them off to avoid false alerts.
+        kubeEtcd:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        prometheus:
+          prometheusSpec:
+            retention: 2d
+            # By default Prometheus only picks up rules/monitors labelled for this Helm
+            # release. "false" = pick up every ServiceMonitor and PrometheusRule in the
+            # cluster, so the shopflow chart can ship its own.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            resources:
+              requests: { cpu: 100m, memory: 400Mi }
+        alertmanager:
+          alertmanagerSpec:
+            resources:
+              requests: { cpu: 10m, memory: 32Mi }
+        grafana:
+          # Local demo only. On a shared cluster this comes from a Secret instead.
+          adminPassword: shopflow-demo
+          sidecar:
+            dashboards:
+              enabled: true
+              # Load dashboards from ConfigMaps labelled grafana_dashboard=1 in ANY namespace
+              searchNamespace: ALL
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The Prometheus Operator CRDs are too large for a client-side apply
+      - ServerSideApply=true

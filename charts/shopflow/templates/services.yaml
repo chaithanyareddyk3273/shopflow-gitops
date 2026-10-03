@@ -1,18 +1,33 @@
 {{- /*
-One Deployment + one Service for EACH microservice listed under `services:` in values.yaml.
+One workload + one Service for EACH microservice listed under `services:` in values.yaml.
 `range` is a loop: $name is e.g. "orders-api", $svc is that service's settings.
 Adding a new microservice = adding an entry in values.yaml, no new template needed.
+
+The workload is normally a Deployment. With `canary.enabled: true` it becomes an Argo
+Rollout instead: same pod template, but new versions go out as a canary (see
+rollouts-analysis.yaml) and are rolled back automatically if their error rate is too high.
 */ -}}
 {{- range $name, $svc := .Values.services }}
+{{- $canary := and $svc.canary $svc.canary.enabled }}
+{{- $autoscaling := and $svc.autoscaling $svc.autoscaling.enabled }}
 ---
+{{- if $canary }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+{{- else }}
 apiVersion: apps/v1
 kind: Deployment
+{{- end }}
 metadata:
   name: {{ $name }}
   labels:
     {{- include "shopflow.labels" (dict "root" $ "name" $name) | nindent 4 }}
 spec:
+  {{- if not $autoscaling }}
   replicas: {{ $svc.replicas }}       # how many copies (pods) to keep running
+  {{- end }}
+  {{- /* With autoscaling on, the HorizontalPodAutoscaler owns the replica count;
+         setting it here too would make ArgoCD and the autoscaler fight. */}}
   revisionHistoryLimit: 3                # keep 3 old versions for `kubectl rollout undo`
   # Which pods belong to this Deployment (must match the pod labels below; never change it)
   selector:
@@ -103,6 +118,23 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+  {{- if $canary }}
+  # Canary: run the new version next to the old one, check it, then switch fully.
+  # Without a service mesh, the traffic split follows the pod ratio (50% = half the pods).
+  strategy:
+    canary:
+      steps:
+        - setWeight: 50                 # half the pods run the new version
+        - pause: { duration: 30s }      # let it receive real traffic
+        - analysis:                     # ask Prometheus: is its error rate OK?
+            templates:
+              - templateName: {{ $name }}-success-rate
+            args:
+              - name: canary-hash
+                valueFrom:
+                  podTemplateHashValue: Latest   # identifies the NEW version's pods
+        - setWeight: 100                # healthy: move everything to the new version
+  {{- end }}
 ---
 # A Service gives the pods one stable name and address, e.g. http://orders-api:8000,
 # and spreads requests across all pods of the Deployment

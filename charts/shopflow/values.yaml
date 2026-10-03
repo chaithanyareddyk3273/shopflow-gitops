@@ -1,20 +1,41 @@
 # Default values. Environment-specific overrides live in environments/<env>/values.yaml.
 # Resource names are fixed (orders-api, postgres, ...), so install one release per namespace.
+#
+# Production features are OFF by default and switched on per environment, so a new
+# feature reaches dev first and prod only through a reviewed promotion PR.
 
 imagePullPolicy: IfNotPresent
 
-# Dev-only credentials. Phase 3 replaces these with Sealed Secrets / External Secrets,
-# so no real secret is ever committed to Git.
+# Plain-text credentials, used ONLY when sealedSecrets.enabled is false (local laptop).
 credentials:
   postgresPassword: shopflow-dev
   rabbitmqPassword: shopflow-dev
+
+# Encrypted credentials for shared environments (see templates/secrets.yaml).
+# Create the encrypted values with kubeseal; see the walkthrough, section 10.4.
+sealedSecrets:
+  enabled: false
+  encryptedData: {}         # postgres-password: AgB..., rabbitmq-password: AgB...
+
+# ServiceMonitor + alert rules. Needs platform-monitoring (Prometheus Operator CRDs).
+monitoring:
+  enabled: false
+
+# Pod-to-pod firewall rules (see templates/networkpolicies.yaml).
+networkPolicies:
+  enabled: false
+  monitoringNamespace: monitoring   # where Prometheus runs; allowed to scrape /metrics
+
+# Used by canary analysis (services.<name>.canary). Needs platform-argo-rollouts.
+rollouts:
+  prometheusAddress: http://monitoring-prometheus.monitoring.svc:9090
 
 services:
   orders-api:
     image:
       repository: shopflow/orders-api
       tag: dev
-    replicas: 2
+    replicas: 2             # ignored when autoscaling is enabled
     database: orders        # gets DATABASE_URL for this database
     rabbitmq: true          # gets RABBITMQ_URL
     env:
@@ -23,6 +44,15 @@ services:
     resources:
       requests: { cpu: 50m, memory: 96Mi }
       limits: { memory: 256Mi }
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 70
+    canary:
+      enabled: false
+      route: /orders                # the endpoint whose success rate decides the canary
+      successRateThreshold: 0.95    # below 95% successful requests = roll back
 
   inventory-svc:
     image:
@@ -35,6 +65,11 @@ services:
     resources:
       requests: { cpu: 50m, memory: 96Mi }
       limits: { memory: 256Mi }
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 70
 
   notifier:
     image:
