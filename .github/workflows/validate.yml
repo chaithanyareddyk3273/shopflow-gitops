@@ -72,3 +72,37 @@ jobs:
         run: |
           kubectl kustomize platform/dashboards | kubeconform -strict -summary -
           for f in platform/dashboards/*.json; do jq empty "$f" && echo "valid JSON: $f"; done
+
+  terraform:
+    name: Terraform (infra/aws)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/aws
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Format check
+        run: terraform fmt -check -recursive -diff
+
+      # No AWS account needed: -backend=false skips remote state, and validate checks
+      # every resource and setting against the real AWS provider and modules
+      - name: Init (no backend)
+        run: terraform init -backend=false -input=false
+
+      - name: Validate
+        run: terraform validate
+
+      # Pinned to a commit SHA (same as in shopflow-app). Scans our code and the modules
+      # it uses; accepted findings live in .trivyignore, each with a written reason.
+      - name: Security scan (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/aws
+          severity: HIGH,CRITICAL
+          skip-dirs: "**/examples"
+          trivyignores: infra/aws/.trivyignore
+          exit-code: "1"
