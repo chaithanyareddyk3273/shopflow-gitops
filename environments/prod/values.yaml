@@ -4,19 +4,40 @@
 # workflow (Actions tab). It copies the tags currently running in dev; merging the PR
 # is the production deployment, and reverting it is the rollback.
 imagePullPolicy: IfNotPresent
+
+monitoring:
+  enabled: true             # ServiceMonitor + alert rules
+networkPolicies:
+  enabled: true             # pod-to-pod firewall
+
+# Passwords encrypted for this namespace only (scripts/seal-credentials.sh shopflow-prod)
+sealedSecrets:
+  enabled: true
+  encryptedData:
+    postgres-password: AgAy/kR4ChUuUajmbdsY1gPvCM+jXspWLjrgGU5THHAkZZqcX6ldarYWqcJ1R9gOA72jspRr4gMY/IcGR2NsixdBNZ65iC6cOB1Km6YUYeTneXeUNPE0mE4cN2kuZ8wpxPJ40FgwJpa+FGNjbhCwWp0JzPm8oqBXOvHZptru1wnLXBGSuWTgRGFaidlljuQ7qUMvyBNvUG0e/KLYBh3MrezFLCzC4dPmUqlFVfVmkkUlojK6n5uEbKAL53DjSx7OVzXzapq30SY7vYXRuGzRRP4PRAI/iOVAjiEG2XF01QY1jnNvbkTgrh23kIqu6kLLUj+6kKpIJqYRhtLn2qaTqE95QOj+fNTCGmWE8tKNIB8NTPXN/n78ETkvzZj4KxLBNE5PegApLBLju4HKeS3LOJeogxPrfVuNgLd1uoLF2xKfMwzszAA6DrXXRwUDay/pFfEv6QHYCv4TK0gam8y1HZNI+lqTVXG9drPF4bJKKZdS0rw1l5g0Ly+cn3fBFY6+fUjWD5Mgg94SpvHAxrzdrTVpeKC67PyQVhF4YVbpKppJN74s/4hqvujpmHySfuaS1nBC7lKBWQJOqkFj/2WdzI6XmMbZYp64AgAROnxKMveGel/RZt6V8DjH/VGQJEBJP2DOT5l4lsXWc4TbgYsZ3VST2ny/x7ylrCjj5YN+GgC3/5F3vIPfWrI6LWdQ2006UVqJjh4beZscqG6sRlhIh8epwhJJjuaUesYUzY58svL8mw==
+    rabbitmq-password: AgCAY/Aq8V39fW56UxYpSgERVOWGrmWtso+uUoraRINp4UguC1ZNwIRyO2uxX847QjW9A2Erzg/sI05EgkNZ48PKM0MILnPrnElCFoV3OWGLluzrTnaTtZrLmF33Dhkibd5MDwmquZ0yPMH6Zvft/Dl5WyM5/f2ceKazAg+GoI7LDHVRi4GVeefbfw3K0GK/wEFiDk6+wZDyv7t0sW8E4UCZiK+pIf83xWNC4oJTOV3PpBDt2zMC7eajnva/lYiOvxKEGSYwPcV/gvbEicWnM0YflnwZLQyeC7UJrrt/9uwl/EG/kqkFc270SmvLr5DByz1jazkIMD9AhLx6qVgYFQeygLefJvSkATWsKufo29pvVLxD+MVX/zoQcGkvQBjvqlh74FI+q+fXqKaMwsH9C6zeHVkDFYTNGaZEjCIg2PbXmaA12UeaN0Ic4AvA4uRukwOm1xJGSMZHFrV2yEvnSUcnGifSohjBWBI5mDr0vx8m4lTnOcmGKN47PeSs5Bqe7XeuLMWtUkZPa7i2TPsEgEiqFqaQhMaab5Ji4VirAC9RZUh9cu4YafViMGH5TsQk9FvZKi8lrjEZQhVDMXm26NE0MSjs6SXvoN/MSoaD6OVZVr+wsSYcgvkj9woZtKcdxIJfj2s3vJbkOPCTN21w9mzqSv+QJ6KupOpVTHtvqmBguaIH7hW9c2KJqfyZ/W+l59eXxOEcR9nsmsUTN4xsdctMBv+wfaGRU6MdqTlntTYYCA==
+
 services:
   orders-api:
-    replicas: 2 # 2 copies: one pod can fail or be replaced with no downtime
     image:
       repository: ghcr.io/chaithanyareddyk3273/shopflow-orders-api
       tag: sha-5093c1c
+    autoscaling:
+      enabled: true
+      minReplicas: 2        # never fewer than 2: one pod can fail with no downtime
+      maxReplicas: 5
+    canary:
+      enabled: true         # new versions go out as a canary, rolled back if errors rise
   inventory-svc:
-    replicas: 2
     image:
       repository: ghcr.io/chaithanyareddyk3273/shopflow-inventory-svc
       tag: sha-5093c1c
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 5
   notifier:
-    replicas: 1 # one consumer is plenty; RabbitMQ queues the work
+    replicas: 1             # one consumer is plenty; RabbitMQ queues the work
     image:
       repository: ghcr.io/chaithanyareddyk3273/shopflow-notifier
       tag: sha-5093c1c
