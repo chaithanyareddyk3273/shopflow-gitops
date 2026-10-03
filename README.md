@@ -63,6 +63,7 @@ shopflow-gitops/
 │   ├── root.yaml                 # app-of-apps: the one Application applied by hand
 │   └── apps/                     # shopflow-dev, shopflow-prod + platform-* (monitoring, autoscaling, secrets, rollouts)
 ├── platform/dashboards/          # Grafana dashboard as code
+├── infra/aws/                    # Terraform for VPC + EKS (validated + Trivy-scanned in CI; see its README)
 ├── .github/workflows/
 │   ├── validate.yml              # helm lint + kubeconform for every environment + all features, on every PR
 │   └── promote.yml               # opens the dev → prod promotion PR

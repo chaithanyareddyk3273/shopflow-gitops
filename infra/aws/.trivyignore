@@ -1,0 +1,7 @@
+# Accepted security findings, each with a reason. Reviewed: 2026-10-02.
+
+# AWS-0104: worker-node security group allows all outbound traffic.
+# Nodes must pull images from ghcr.io and Docker Hub (via the NAT gateway). Restricting
+# egress needs VPC endpoints for AWS services plus an egress proxy/firewall for public
+# registries: out of scope for this demo. Revisit before running real workloads.
+AWS-0104
